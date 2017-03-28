@@ -45,10 +45,16 @@ class Application(tk.Frame):
         super().__init__(root)
         root.title("Tester")
         self.pack()
-        cnv = tk.Text(self, bg="black", fg="green")
-        cnv.config(insertbackground="green")
-        cnv.pack()
 
+        scrollbar = tk.Scrollbar(self)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text = tk.Text(
+            self, bg="black", fg="green", wrap=tk.WORD,
+            yscrollcommand=scrollbar.set,
+            font="{Lucida Sans Typewriter} 16")
+        text.config(insertbackground="white")
+        text.pack()
+        scrollbar.config(command=text.yview)
 
 root = tk.Tk()
 app = Application(root)
