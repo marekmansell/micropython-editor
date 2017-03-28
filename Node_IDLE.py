@@ -33,3 +33,24 @@ while True:
 	print(b"".join(a).decode(), end="")
 
 	# [print(ser.read(1).decode(), end="") for x in range(ser.inWaiting())]
+	
+	
+	
+#### GUI CODE:	
+import tkinter as tk
+
+
+class Application(tk.Frame):
+    def __init__(self, root):
+        super().__init__(root)
+        root.title("Tester")
+        self.pack()
+        cnv = tk.Text(self, bg="black", fg="green")
+        cnv.config(insertbackground="green")
+        cnv.pack()
+
+
+root = tk.Tk()
+app = Application(root)
+app.mainloop()
+
