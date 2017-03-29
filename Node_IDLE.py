@@ -1,9 +1,14 @@
 import tkinter as tk
 import serial
 from time import sleep, time
-from threading import Thread
+import threading 
 from PIL import Image, ImageTk
+import logging
+import queue
 
+logging.basicConfig(level=logging.DEBUG,
+                    format='(%(threadName)-10s) %(message)s',
+                    )
 
 # GUI CLASSES:
 
@@ -84,14 +89,15 @@ class EditArea:
 
 
 class ReplArea:
-    def __init__(self, master, userial):
+    def __init__(self, master):
         self.repl_history = tk.Text(master)
         self.repl_scrollbar = tk.Scrollbar(master)
         self.repl_scrollbar.config(command=self.repl_history.yview)
         self.repl_entry = tk.Entry(master)
+        self.send_queue = queue.Queue()
 
         self.repl_history.config(
-            height=7,
+            height=15,
             state=tk.DISABLED,
             yscrollcommand=self.repl_scrollbar.set
         )
@@ -100,18 +106,27 @@ class ReplArea:
 
         self.repl_entry.bind("<Return>", self._return_event)
         self.repl_entry.bind("<Tab>", self._insert_tab)
+        self.repl_entry.bind("<Key>", self._key_event)
+
+        self.serial_thread = SerialThread(self.repl_history, self.repl_entry, self.send_queue)
 
     def _return_event(self, event):
-        self.repl_history.config(state=tk.NORMAL)
-        self.repl_history.insert(tk.END, self.repl_entry.get() + "\n")
-        self.repl_history.see(tk.END)
-        self.repl_history.config(state=tk.DISABLED)
-        self.repl_history.mark_set(tk.INSERT, 1.0)
+        to_send = self.repl_entry.get().strip()
+        to_send += "\r"
+        to_send = to_send.encode()
+        self.send_queue.put(to_send)
         self.repl_entry.delete(0, tk.END)
 
     def _insert_tab(self, event):
         self.repl_entry.insert(tk.INSERT, " " * 4)
         return 'break'
+
+    def _key_event(self, event):
+        if event.keysym == "Left" and self.text.compare(self.text.index(tk.INSERT), '==', self.stop):
+            return "break"
+        if self.repl_entry.compare(self.text.index(tk.INSERT), '<', self.stop):
+            self.repl_entry.mark_set("insert", self.stop)
+            return "break"
 
 
 class Toolbar(tk.Frame):
@@ -132,13 +147,76 @@ class Toolbar(tk.Frame):
         print("Upload Code")
 
 
+class Userial(serial.Serial):
+    def __init__(self, port, **args):
+        super().__init__(port, **args)
+        self.flushInput()
+
+
+class SerialThread(threading.Thread):
+
+    def __init__(self, repl_history, repl_entry,  send_queue):
+        super().__init__()
+        self.name = "SerialThread"
+        self.repl_history = repl_history
+        self.repl_entry = repl_entry
+        self.send_queue = send_queue
+        self.start()
+
+    def run(self):
+        logging.info('SerialThread Started')
+        userial = Userial("/dev/ttyUSB0", baudrate=115200, timeout=.2)
+        
+        if userial.is_open:
+            logging.info("Serial opened")
+        else:
+            logging.critical("Serial could not be open")
+            return
+
+        sleep(.2)
+        userial.write(chr(4).encode())
+        
+        while True:
+            trailing_whitespaces = 0
+            incoming_bytes = []
+            while not userial.inWaiting():
+                if not self.send_queue.empty():
+                    userial.write(self.send_queue.get())
+                sleep(.01)
+
+            while userial.inWaiting():
+                incoming_bytes.append(userial.read(1))
+            # if incoming_bytes != [b"\n\r"]:
+            for index, byte in enumerate(incoming_bytes):
+                if ord(byte) < 128:
+                    incoming_bytes[index] = byte.decode()
+                    if ord(byte) == ord(" "):  # if white space
+                        trailing_whitespaces += 1
+                    else:
+                        trailing_whitespaces = 0
+                    print(ord(byte), end=" ")
+                else:
+                    incoming_bytes[index] = "$"
+            print("")
+
+            incoming_message = "".join(incoming_bytes)
+            self.repl_history.config(state=tk.NORMAL)
+            self.repl_history.insert(tk.END, incoming_message)
+            self.repl_history.see(tk.END)
+            self.repl_history.config(state=tk.DISABLED)
+            self.repl_history.mark_set(tk.INSERT, 1.0)
+            self.repl_entry.insert(0, " "*(trailing_whitespaces-1))
+
+        return
+
+
+
 class Application(tk.Frame):
     def __init__(self, root):
         super().__init__(root)
         root.title("MicroPython Editor")
         self.grid()
 
-        userial = None
 
         self.edit_area = EditArea(self)
         self.edit_area.line_numbers.grid(row=1, column=0, sticky=tk.N+tk.S)
@@ -146,13 +224,14 @@ class Application(tk.Frame):
         self.edit_area.x_scrollbar.grid(row=2, column=1, sticky=tk.W+tk.E)
         self.edit_area.text_area.grid(row=1, column=1)
 
-        self.repl = ReplArea(self, userial)
+        self.repl = ReplArea(self)
         self.repl.repl_history.grid(row=3, column=1, sticky=tk.W+tk.E)
         self.repl.repl_entry.grid(row=4, column=1, sticky=tk.W+tk.E)
         self.repl.repl_scrollbar.grid(row=3, column=2, sticky=tk.N+tk.S)
 
         self.tool_bar = Toolbar(self)
         self.tool_bar.upload_button.grid(row=0, column=1, sticky=tk.W)
+        
 
 
 root = tk.Tk()
@@ -167,26 +246,3 @@ app.mainloop()
 #   # ser.write("pin = machine.Pin(2, machine.Pin.OUT)\n\r".encode())
 #   # sleep(.5)
 #   # ser.write("pin.value(0)\n\r".encode())
-#   while True:
-#       out = input()
-#       out += "\r"
-#       out = out.encode()
-#       ser.write(out)
-
-
-# ser = serial.Serial("/dev/ttyUSB0", baudrate=115200, timeout=.2)
-# ser.flushInput()
-# Thread(target=listener).start()
-
-
-# while True:
-#   a = []
-#   while not ser.inWaiting():
-#       sleep(.01)
-
-#   while ser.inWaiting():
-#       a.append(ser.read(1))
-#   # if a != [b"\n\r"]:
-#   print(b"".join(a).decode(), end="")
-
-#   # [print(ser.read(1).decode(), end="") for x in range(ser.inWaiting())]
