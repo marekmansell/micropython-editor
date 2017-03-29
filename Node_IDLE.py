@@ -93,39 +93,39 @@ class ReplArea:
         self.repl_history = tk.Text(master)
         self.repl_scrollbar = tk.Scrollbar(master)
         self.repl_scrollbar.config(command=self.repl_history.yview)
-        self.repl_entry = tk.Entry(master)
+        # self.repl_entry = tk.Entry(master)
+        self.repl_stop = self.repl_history.index("end")
         self.send_queue = queue.Queue()
 
         self.repl_history.config(
             height=15,
-            state=tk.DISABLED,
             yscrollcommand=self.repl_scrollbar.set
         )
 
-        self.repl_entry.insert(0, "print(\"This is the MicroPython REPL. Press Enter!\")")
+        # self.repl_entry.insert(0, "print(\"This is the MicroPython REPL. Press Enter!\")")
 
-        self.repl_entry.bind("<Return>", self._return_event)
-        self.repl_entry.bind("<Tab>", self._insert_tab)
-        self.repl_entry.bind("<Key>", self._key_event)
+        self.repl_history.bind("<Return>", self._return_event)
+        self.repl_history.bind("<Tab>", self._insert_tab)
+        self.repl_history.bind("<Key>", self._key_event)
 
-        self.serial_thread = SerialThread(self.repl_history, self.repl_entry, self.send_queue)
+        self.serial_thread = SerialThread(self)
 
     def _return_event(self, event):
-        to_send = self.repl_entry.get().strip()
+        to_send = self.repl_history.get(self.repl_stop, tk.END)
         to_send += "\r"
         to_send = to_send.encode()
         self.send_queue.put(to_send)
-        self.repl_entry.delete(0, tk.END)
 
     def _insert_tab(self, event):
-        self.repl_entry.insert(tk.INSERT, " " * 4)
+        self.repl_history.insert(tk.INSERT, " " * 4)
         return 'break'
 
     def _key_event(self, event):
-        if event.keysym == "Left" and self.text.compare(self.text.index(tk.INSERT), '==', self.stop):
+        print(self.repl_history.index(tk.INSERT), '==', self.repl_stop)
+        if event.keysym == "Left" and self.repl_history.compare(self.repl_history.index(tk.INSERT), '==', self.repl_stop):
             return "break"
-        if self.repl_entry.compare(self.text.index(tk.INSERT), '<', self.stop):
-            self.repl_entry.mark_set("insert", self.stop)
+        if self.repl_history.compare(self.repl_history.index(tk.INSERT), '<', self.repl_stop):
+            self.repl_history.mark_set("insert", self.repl_stop)
             return "break"
 
 
@@ -155,12 +155,10 @@ class Userial(serial.Serial):
 
 class SerialThread(threading.Thread):
 
-    def __init__(self, repl_history, repl_entry,  send_queue):
+    def __init__(self, repl_area):
         super().__init__()
         self.name = "SerialThread"
-        self.repl_history = repl_history
-        self.repl_entry = repl_entry
-        self.send_queue = send_queue
+        self.repl_area = repl_area
         self.start()
 
     def run(self):
@@ -180,8 +178,8 @@ class SerialThread(threading.Thread):
             trailing_whitespaces = 0
             incoming_bytes = []
             while not userial.inWaiting():
-                if not self.send_queue.empty():
-                    userial.write(self.send_queue.get())
+                if not self.repl_area.send_queue.empty():
+                    userial.write(self.repl_area.send_queue.get())
                 sleep(.01)
 
             while userial.inWaiting():
@@ -200,12 +198,10 @@ class SerialThread(threading.Thread):
             print("")
 
             incoming_message = "".join(incoming_bytes)
-            self.repl_history.config(state=tk.NORMAL)
-            self.repl_history.insert(tk.END, incoming_message)
-            self.repl_history.see(tk.END)
-            self.repl_history.config(state=tk.DISABLED)
-            self.repl_history.mark_set(tk.INSERT, 1.0)
-            self.repl_entry.insert(0, " "*(trailing_whitespaces-1))
+            self.repl_area.repl_history.insert(tk.END, incoming_message)
+            self.repl_area.repl_history.see(tk.END)
+            self.repl_area.repl_history.mark_set(tk.INSERT, tk.END)
+            self.repl_area.repl_stop = self.repl_area.repl_history.index("end-1c")
 
         return
 
@@ -226,7 +222,6 @@ class Application(tk.Frame):
 
         self.repl = ReplArea(self)
         self.repl.repl_history.grid(row=3, column=1, sticky=tk.W+tk.E)
-        self.repl.repl_entry.grid(row=4, column=1, sticky=tk.W+tk.E)
         self.repl.repl_scrollbar.grid(row=3, column=2, sticky=tk.N+tk.S)
 
         self.tool_bar = Toolbar(self)
