@@ -11,38 +11,33 @@ import subprocess
 from pygments import lex
 from pygments.lexers import PythonLexer
 
+# tkinter on scrollbar instead of loo 60ms!!!
+# every single fucking tab!!!!
 
 logging.basicConfig(level=logging.DEBUG,
                     format='(%(threadName)-10s) %(message)s',
                     )
 
-class EditArea:
-    """
-        TextField creates the following widgets:
-            self.text_area = tk.Text (Main Text Editor Area)
-            self.y_scrollbar = tk.Scrollbar (Vertical Text Editor Scrollbar)
-            self.x_scrollbar = tk.Scrollbar (Horizontal Text Editor Scrollbar)
-            self.line_numbers = tk.Canvas (SideBar with line numbers)
 
-        Example usage:
-            edit_area = EditArea(master)
-            edit_area.line_numbers.grid(row=1, column=0, sticky=tk.N+tk.S)
-            edit_area.y_scrollbar.grid(row=1, column=2, sticky=tk.N+tk.S)
-            edit_area.x_scrollbar.grid(row=2, column=1, sticky=tk.W+tk.E)
-            edit_area.text_area.grid(row=1, column=1)
-    """
-    def __init__(self, master, **kwargs):
+class NotebookTab(ttk.Frame):
+    def __init__(self, master, title):
+        super().__init__(master)
+        self.master = master   
+        self.title = title
 
-        self.text_area = tk.Text(master, **kwargs)
+        self.text_area = tk.Text(self)
+        self.text_area.grid(row=0, column=1)
 
-        self.master = master
 
-        self.y_scrollbar = tk.Scrollbar(master)
+        self.y_scrollbar = tk.Scrollbar(self)
         self.y_scrollbar.config(command=self.text_area.yview)
-        self.x_scrollbar = tk.Scrollbar(master)
+        self.y_scrollbar.grid(row=0, column=2, sticky=tk.N+tk.S)
+        self.x_scrollbar = tk.Scrollbar(self)
         self.x_scrollbar.config(command=self.text_area.xview, orient=tk.HORIZONTAL)
+        self.x_scrollbar.grid(row=1, column=1, sticky=tk.E+tk.W)
 
-        self.line_numbers = tk.Canvas(master, width=28)
+        self.line_numbers = tk.Canvas(self, width=28)
+        self.line_numbers.grid(row=0, column=0, sticky=tk.N+tk.S)
 
         self.text_area.config(
             # bg="black",  # background color
@@ -55,15 +50,25 @@ class EditArea:
         )
 
         self.last_line_number = None
-        self._update_line_numbers()
+        self.update_line_numbers()
 
         self.text_area.bind("<Tab>", self._tab_event)
         self.text_area.bind("<Shift-ISO_Left_Tab>", self._shift_tab_event)
         self.text_area.bind("<Control-a>", self._control_a_event)
         self.text_area.bind("<Control-A>", self._control_a_event)
-        self.text_area.bind("<Key>", self._key_event)
 
-    def _update_line_numbers(self):
+    def _tab_event(self, event):
+        self.text_area.insert(tk.INSERT, " " * 4)
+        return 'break'
+
+    def _shift_tab_event(self, event):
+        return 'break'
+
+    def _control_a_event(self, event):
+        self.text_area.tag_add("sel", "1.0", "end")
+        return 'break'
+
+    def update_line_numbers(self):
         line = self.text_area.index('@0,0')
         if (self.last_line_number != line) or (self.last_line_number is None):
             self.line_numbers.delete("all")
@@ -79,40 +84,93 @@ class EditArea:
 
             self.last_line_number = line
 
-        self.master.after(60, self._update_line_numbers)
 
-    def _tab_event(self, event):
-        self.text_area.insert(tk.INSERT, " " * 4)
-        return 'break'
+class Editor(tk.Frame):
+    def __init__(self, master):
+        super().__init__(master)
+        self.master = master
+        self.grid_columnconfigure(0, weight=1)
 
-    def _shift_tab_event(self, event):
-        return 'break'
+        self.notebook_tabs = []
+        self.notebook = ttk.Notebook(self)
+        self.notebook.grid(row=0)
+        self.add_tab()
+        self.add_tab()
 
-    def _control_a_event(self, event):
-        self.text_area.tag_add("sel", "1.0", "end")
-        return 'break'
+        self.line_number_update_timer()
 
-    def _key_event(self, event):
-        textPad = self.text_area
-        textPad.tag_configure("Token.Comment", foreground="#b21111")
-        textPad.mark_set("range_start", "1.0")
-        data = textPad.get("1.0", "end-1c")
-        for token, content in lex(data, PythonLexer()):
-            textPad.mark_set("range_end", "range_start + %dc" % len(content))
-            textPad.tag_add(str(token), "range_start", "range_end")
-            textPad.mark_set("range_start", "range_end")
+        self.repl_visible = False
+        # self.u_serial = uSerial("/dev/ttyUSB0")
+        self.u_serial = uSerial(self._get_usb_devices()[0])
+        self.repl = Repl(self, self.u_serial)
+
+    def line_number_update_timer(self):
+        self.selected_tab_object().update_line_numbers()
+        self.master.after(60, self.line_number_update_timer)
+
+    def add_tab(self, title="untitled *", file=None):
+        new_tab = NotebookTab(self.notebook, title)
+        self.notebook_tabs.append(new_tab)
+        self.notebook.add(new_tab, text=title)
+
+    def selected_tab_index(self):
+        return self.notebook.index(self.notebook.select())
+
+    def selected_tab_object(self):
+        return self.notebook_tabs[self.selected_tab_index()]
+
+    def run_tab(self):
+        self.set_repl_visible()
+        self.u_serial.run(self.selected_tab_object().text_area.get(1.0, tk.END).encode())
+
+    def new_tab(self):
+        if len(self.notebook_tabs) < 10:
+            self.add_tab()
+
+    def toggle_repl(self):
+        if self.repl_visible:
+            self.set_repl_invisible()
+        else:
+            self.set_repl_visible()
+
+    def set_repl_visible(self):
+        self.repl_visible = True
+        self.repl.grid(row=1, sticky=tk.W+tk.E)
+
+    def set_repl_invisible(self):
+        self.repl_visible = False
+        self.repl.grid_remove()
+
+    def _get_usb_devices(self):
+        serial_devices = subprocess.check_output("ls /dev/serial/by-path/; exit 0", stderr=subprocess.STDOUT, shell=True)
+        serial_devices = serial_devices.decode().strip().split("\n")
+        serial_devices = [x.strip() for x in serial_devices]
+        serial_devices = [os.path.realpath(os.path.join("/dev/serial/by-path/", x)) for x in serial_devices]
+        return serial_devices
 
 
-class ReplArea:
+
+class FileManager(tk.Frame):
     def __init__(self, master, u_serial):
-        self.repl_history = tk.Text(master)
-        self.repl_scrollbar = tk.Scrollbar(master)
-        self.repl_scrollbar.config(command=self.repl_history.yview)
-        # self.repl_entry = tk.Entry(master)
-        self.repl_stop = self.repl_history.index("end")
+        super().__init__(master)
+        self.grid_columnconfigure(0, weight=1)
+        self.t = tk.Text(self)
+        self.t.grid(row=0, sticky=tk.W+tk.E+tk.S+tk.N)
+
+
+class Repl(tk.Frame):
+    def __init__(self, master, u_serial):
+        super().__init__(master)
+        self.grid_columnconfigure(0, weight=1)
+        self.repl_text_field = tk.Text(self)
+        self.repl_text_field.grid(row=0, column=0, sticky=tk.W+tk.E)
+        self.repl_scrollbar = tk.Scrollbar(self)
+        self.repl_scrollbar.grid(row=0, column=1, sticky=tk.N+tk.S)
+        self.repl_scrollbar.config(command=self.repl_text_field.yview)
+        self.repl_stop = self.repl_text_field.index("end")
         self.send_queue = queue.Queue()
 
-        self.repl_history.config(
+        self.repl_text_field.config(
             height=15,
             yscrollcommand=self.repl_scrollbar.set,
             # background="black",
@@ -120,46 +178,42 @@ class ReplArea:
             # insertbackground="white",  # cursor color
         )
 
-        # self.repl_entry.insert(0, "print(\"This is the MicroPython REPL. Press Enter!\")")
 
-        self.repl_history.bind("<Return>", self._return_event)
-        self.repl_history.bind("<Tab>", self._insert_tab)
-        self.repl_history.bind("<Key>", self._key_event)
-        self.repl_history.bind("<Control-a>", self._ctrl_a_event)
-        self.repl_history.bind("<Control-A>", self._ctrl_a_event)
-        self.repl_history.bind("<Control-b>", self._ctrl_b_event)
-        self.repl_history.bind("<Control-B>", self._ctrl_b_event)
-        self.repl_history.bind("<Control-c>", self._ctrl_c_event)
-        self.repl_history.bind("<Control-C>", self._ctrl_c_event)
-        self.repl_history.bind("<Control-d>", self._ctrl_d_event)
-        self.repl_history.bind("<Control-D>", self._ctrl_d_event)
-        self.repl_history.bind("<Control-e>", self._ctrl_e_event)
-        self.repl_history.bind("<Control-E>", self._ctrl_e_event)
+        self.repl_text_field.bind("<Key>", self._key_event)
+        self.repl_text_field.bind("<Control-a>", self._ctrl_a_event)
+        self.repl_text_field.bind("<Control-A>", self._ctrl_a_event)
+        self.repl_text_field.bind("<Control-b>", self._ctrl_b_event)
+        self.repl_text_field.bind("<Control-B>", self._ctrl_b_event)
+        self.repl_text_field.bind("<Control-c>", self._ctrl_c_event)
+        self.repl_text_field.bind("<Control-C>", self._ctrl_c_event)
+        self.repl_text_field.bind("<Control-d>", self._ctrl_d_event)
+        self.repl_text_field.bind("<Control-D>", self._ctrl_d_event)
+        self.repl_text_field.bind("<Control-e>", self._ctrl_e_event)
+        self.repl_text_field.bind("<Control-E>", self._ctrl_e_event)
 
         self.serial_thread = SerialThread(self, u_serial)
-
-    def _return_event(self, event):
-        to_send = self.repl_history.get(self.repl_stop, tk.END).rstrip()
-        to_send += "\r"
-        to_send = to_send.encode()
-        event.widget.delete(self.repl_stop, tk.END)
-        self.send_queue.put(to_send)
-        return "break"
-
-    def _insert_tab(self, event):
-        self.repl_history.insert(tk.INSERT, " " * 4)
-        return 'break'
+       
 
     def _key_event(self, event):
-        if event.keysym == "Left" and self.repl_history.compare(self.repl_history.index(tk.INSERT), '==', self.repl_stop):
+        if event.keysym == "Left" and self.repl_text_field.compare(self.repl_text_field.index(tk.INSERT), '==', self.repl_stop):
             return "break"
-        if event.keysym == "BackSpace" and self.repl_history.compare(self.repl_history.index(tk.INSERT), '==', self.repl_stop):
+        if event.keysym == "BackSpace" and self.repl_text_field.compare(self.repl_text_field.index(tk.INSERT), '==', self.repl_stop):
             return "break"
         if event.keysym == "Up":
             return "break"
-        if self.repl_history.compare(self.repl_history.index(tk.INSERT), '<', self.repl_stop):
-            self.repl_history.mark_set("insert", self.repl_stop)
+        if self.repl_text_field.compare(self.repl_text_field.index(tk.INSERT), '<', self.repl_stop):
+            self.repl_text_field.mark_set("insert", self.repl_stop)
             return "break"
+        if event.keysym == "Tab":
+            self.repl_text_field.insert(tk.INSERT, " " * 4)
+            return 'break'
+        if event.keysym == "Return":
+            to_send = self.repl_text_field.get(self.repl_stop, tk.END).rstrip()
+            to_send += "\r"
+            to_send = to_send.encode()
+            self.repl_text_field.delete(self.repl_stop, tk.END)
+            self.send_queue.put(to_send)
+            return "break" 
 
     def _ctrl_a_event(self, event):
         self.send_queue.put(chr(1).encode())
@@ -183,30 +237,47 @@ class ReplArea:
 
 
 class Toolbar(tk.Frame):
-    def __init__(self, master, u_serial, edit_area, repl_area):
-        super().__init__(master, borderwidth=2, relief='raised')
-        self.u_serial = u_serial
-        self.edit_area = edit_area
-        self.repl_area = repl_area
+    def __init__(self, master):
+        super().__init__(master, borderwidth=2)
 
-        # Load all the images first as PNGs and use ImageTk to convert
-        # them to usable Tkinter images.
-        img_upload = Image.open('load.png')
-        img_upload = img_upload.resize((50, 50), Image.ANTIALIAS)
-        self.tk_img_upload = ImageTk.PhotoImage(img_upload)
+        self.images = []
+        self.buttons = {}
 
-        # Set up all the buttons for use on the toolbars.
-        self.upload_button = tk.Button(master, image=self.tk_img_upload, command=self._upload_event)
+        self._add_button("new", "img/new.png")
+        self._add_button("load_file", "img/load_file.png")
+        self._add_button("save", "img/save.png")
+        self._add_separator("separator_1")
+        self._add_separator("separator_2")
+        self._add_button("run", "img/run.png")
+        self._add_button("repl", "img/repl.png")
+        self._add_button("files", "img/files.png")
 
-    def _upload_event(self):
-        # self.upload_button.flash()
-        self.u_serial.run(self.edit_area.text_area.get(1.0, tk.END).encode())
-        print("Upload Code")
+
+    def _load_image(self, img_file):
+        # Load the image first as PNGs and use ImageTk to convert
+        # them to usable Tkinter image.
+        img = Image.open(img_file)
+        img = img.resize((40, 40), Image.ANTIALIAS)
+        img = ImageTk.PhotoImage(img)
+        
+        # The image must be stored somewhere forever
+        self.images.append(img)
+        return self.images[-1]
+
+    def _add_button(self, name, img_file):
+        new_button = tk.Button(self, image=self._load_image(img_file))
+        new_button.grid(row=0, column=len(self.buttons))
+        self.buttons[name] = new_button
+
+    def _add_separator(self, name):
+        new_separator = ttk.Separator(self,orient=tk.VERTICAL)
+        new_separator.grid(row=0, column=len(self.buttons), sticky=tk.N+tk.S)
+        self.buttons[name] = new_separator
 
 
 class uSerial:
-    def __init__(self, port, **args):
-        self.serial = serial.Serial(port, **args)
+    def __init__(self, port):
+        self.serial = serial.Serial(port, baudrate=115200, timeout=.2)
         self.serial.flushInput()
 
     def read(self, num):
@@ -237,11 +308,7 @@ class uSerial:
     def enter_raw_repl(self):
         self.serial.write(b'\r\x03\x03') # ctrl-C twice: interrupt any running program
 
-        # # flush input (without relying on serial.flushInput())
-        # n = self.serial.inWaiting()
-        # while n > 0:
-        #     self.serial.read(n)
-        #     n = self.serial.inWaiting()
+        self.serial.flushInput()
 
         self.serial.write(b'\r\x01') # ctrl-A: enter raw REPL
         sleep(.1)
@@ -264,10 +331,10 @@ class uSerial:
 
 class SerialThread(threading.Thread):
 
-    def __init__(self, repl_area, u_serial):
+    def __init__(self, repl, u_serial):
         super().__init__()
         self.name = "SerialThread"
-        self.repl_area = repl_area
+        self.repl = repl
         self.u_serial = u_serial
         self.start()
 
@@ -285,8 +352,8 @@ class SerialThread(threading.Thread):
         
         while True:
             incoming_bytes = []
-            if not self.repl_area.send_queue.empty():
-                message = self.repl_area.send_queue.get()
+            if not self.repl.send_queue.empty():
+                message = self.repl.send_queue.get()
                 print("Sending: ", message)
                 self.u_serial.write(message)
             if self.u_serial.inWaiting():
@@ -302,13 +369,13 @@ class SerialThread(threading.Thread):
                 print("")
 
                 incoming_message = "".join(incoming_bytes).replace("\r", "")
-                self.repl_area.repl_history.insert(tk.END, incoming_message)
-                self.repl_area.repl_history.see(tk.END)
-                self.repl_area.repl_history.mark_set(tk.INSERT, tk.END)
+                self.repl.repl_text_field.insert(tk.END, incoming_message)
+                self.repl.repl_text_field.see(tk.END)
+                self.repl.repl_text_field.mark_set(tk.INSERT, tk.END)
                 # if self.text_color == "grey":
-                #     self.repl_area.repl_history.tag_add("grey", self.repl_area.repl_stop, tk.END)
-                #     self.repl_area.repl_history.tag_config("grey", foreground="grey")
-                self.repl_area.repl_stop = self.repl_area.repl_history.index("end-1c")
+                #     self.repl.repl_text_field.tag_add("grey", self.repl.repl_stop, tk.END)
+                #     self.repl.repl_text_field.tag_config("grey", foreground="grey")
+                self.repl.repl_stop = self.repl.repl_text_field.index("end-1c")
             else:
                 sleep(.01)
 
@@ -320,42 +387,17 @@ class Application(tk.Frame):
         super().__init__(root)
         root.title("MicroPython Editor")
         self.grid()
+        self.grid_columnconfigure(0, weight=1)
 
-        print(self._get_usb_devices())
+        self.editor = Editor(self)
+        self.editor.grid(row=1)
+    
+        self.tool_bar = Toolbar(self)
+        self.tool_bar.grid(row=0, sticky=tk.W)
 
-        self.u_serial = uSerial("/dev/ttyUSB0", baudrate=115200, timeout=.2)
-
-        self.edit_area = EditArea(self)
-        self.edit_area.line_numbers.grid(row=1, column=0, sticky=tk.N+tk.S)
-        self.edit_area.y_scrollbar.grid(row=1, column=2, sticky=tk.N+tk.S)
-        self.edit_area.x_scrollbar.grid(row=2, column=1, sticky=tk.W+tk.E)
-        self.edit_area.text_area.grid(row=1, column=1)
-
-        self.repl = ReplArea(self, self.u_serial)
-        self.repl.repl_history.grid(row=3, column=1, sticky=tk.W+tk.E)
-        self.repl.repl_scrollbar.grid(row=3, column=2, sticky=tk.N+tk.S)
-
-        self.tool_bar = Toolbar(self, self.u_serial, self.edit_area, self.repl)
-        self.tool_bar.upload_button.grid(row=0, column=1, sticky=tk.W)
-
-        # n = ttk.Notebook(self)
-        # f1 = ttk.Frame(n)   # first page, which would get widgets gridded into it
-        # f2 = ttk.Frame(n)   # second page
-        # n.add(f1, text='One')
-        # n.add(f2, text='Two')
-        # k1 = tk.Text(f1)
-        # k2 = tk.Text(f2)
-        # n.grid()
-        # k1.grid()
-        # k2.grid()
-
-    def _get_usb_devices(self):
-        serial_devices = subprocess.check_output("ls /dev/serial/by-path/; exit 0", stderr=subprocess.STDOUT, shell=True)
-        serial_devices = serial_devices.decode().strip().split("\n")
-        serial_devices = [x.strip() for x in serial_devices]
-        serial_devices = [os.path.realpath(os.path.join("/dev/serial/by-path/", x)) for x in serial_devices]
-        return serial_devices
-
+        self.tool_bar.buttons["run"].config(command=self.editor.run_tab)
+        self.tool_bar.buttons["new"].config(command=self.editor.new_tab)
+        self.tool_bar.buttons["repl"].config(command=self.editor.toggle_repl)
 
 def run():
     root = tk.Tk()
