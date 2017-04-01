@@ -1,16 +1,15 @@
 import tkinter as tk
 from tkinter import ttk
-import serial
+import serial # requires installing
 from time import sleep, time
 import threading 
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk # requires installing
 import logging
 import queue
 import os
 import subprocess
-from pygments import lex
-from pygments.lexers import PythonLexer
 from tkinter import filedialog
+import sys
 
 # tkinter on scrollbar instead of loo 60ms!!!
 # every single fucking tab!!!!
@@ -107,6 +106,36 @@ class NotebookTab(ttk.Frame):
             self.title = os.path.basename(self.file)
             self.master.tab(self.master.select(), text=self.title)
 
+
+class SerialSetupWindow(tk.Toplevel):
+    def __init__(self, master, command):
+        super().__init__(master)
+        self.title("Connect to MicroPython serial device")
+        self.attributes("-topmost", True)
+        self.grab_set()
+        self.command = command
+
+        if sys.platform == "linux":
+            self.usb_devices = self._get_usb_devices_linux()
+        
+        buttons = []
+        for i, device in enumerate(self.usb_devices):
+            buttons.append(tk.Button(self, text=device, command=lambda dev=device: self.button_pressed(dev)))
+            buttons[-1].grid()
+
+    def _get_usb_devices_linux(self):
+        serial_devices = subprocess.check_output("ls /dev/serial/by-path/; exit 0", stderr=subprocess.STDOUT, shell=True)
+        serial_devices = serial_devices.decode().strip().split("\n")
+        serial_devices = [x.strip() for x in serial_devices]
+        serial_devices = [os.path.realpath(os.path.join("/dev/serial/by-path/", x)) for x in serial_devices]
+        return serial_devices
+
+    def button_pressed(self, device):
+        self.command(device)
+        self.grab_release() # to return to normal
+        self.destroy()
+
+
 class Editor(tk.Frame):
     def __init__(self, master):
         super().__init__(master)
@@ -121,8 +150,15 @@ class Editor(tk.Frame):
         self.line_number_update_timer()
 
         self.repl_visible = False
-        # self.u_serial = uSerial("/dev/ttyUSB0")
-        self.u_serial = uSerial(self._get_usb_devices()[0])
+        
+        self.setup_device()
+
+    def setup_device(self):
+        SerialSetupWindow(self, self.connect)
+
+    def connect(self, device):
+        self.master.change_title(device)
+        self.u_serial = uSerial(device)
         self.repl = Repl(self, self.u_serial)
 
     def line_number_update_timer(self):
@@ -162,13 +198,6 @@ class Editor(tk.Frame):
     def set_repl_invisible(self):
         self.repl_visible = False
         self.repl.grid_remove()
-
-    def _get_usb_devices(self):
-        serial_devices = subprocess.check_output("ls /dev/serial/by-path/; exit 0", stderr=subprocess.STDOUT, shell=True)
-        serial_devices = serial_devices.decode().strip().split("\n")
-        serial_devices = [x.strip() for x in serial_devices]
-        serial_devices = [os.path.realpath(os.path.join("/dev/serial/by-path/", x)) for x in serial_devices]
-        return serial_devices
 
     def save_file(self):
         self.selected_tab_object().save_file()
@@ -279,6 +308,7 @@ class Toolbar(tk.Frame):
         self._add_button("run", "img/run.png")
         self._add_button("repl", "img/repl.png")
         self._add_button("files", "img/files.png")
+        self._add_button("device", "img/device.png")
 
 
     def _load_image(self, img_file):
@@ -408,7 +438,9 @@ class SerialThread(threading.Thread):
 class Application(tk.Frame):
     def __init__(self, root):
         super().__init__(root)
-        root.title("MicroPython Editor")
+        self.title = "MicroPython Editor"
+        self.root = root
+        self.change_title()
         self.grid()
         self.grid_columnconfigure(0, weight=1)
 
@@ -423,6 +455,13 @@ class Application(tk.Frame):
         self.tool_bar.buttons["repl"].config(command=self.editor.toggle_repl)
         self.tool_bar.buttons["load_file"].config(command=self.editor.load_file)
         self.tool_bar.buttons["save_file"].config(command=self.editor.save_file)
+        self.tool_bar.buttons["device"].config(command=self.editor.setup_device)
+
+    def change_title(self, device=None):
+        if device:
+            self.root.title("{} - {}".format(self.title, device))
+        else:
+            self.root.title(self.title)
 
 def run():
     root = tk.Tk()
