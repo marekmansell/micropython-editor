@@ -2,6 +2,8 @@ from machine import Pin
 from neopixel import NeoPixel
 import time
 
+print("This is updated!")
+
 pin = Pin(0, Pin.OUT)   # nastaví pin ako digitálny výstup
 np = NeoPixel(pin, 8)   # Vytvorí NeoPixel driver pre 8 pixelov
 

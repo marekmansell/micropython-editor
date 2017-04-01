@@ -10,6 +10,7 @@ import os
 import subprocess
 from pygments import lex
 from pygments.lexers import PythonLexer
+from tkinter import filedialog
 
 # tkinter on scrollbar instead of loo 60ms!!!
 # every single fucking tab!!!!
@@ -18,16 +19,15 @@ logging.basicConfig(level=logging.DEBUG,
                     format='(%(threadName)-10s) %(message)s',
                     )
 
-
 class NotebookTab(ttk.Frame):
-    def __init__(self, master, title):
+    def __init__(self, master, title, file):
         super().__init__(master)
         self.master = master   
         self.title = title
+        self.file = file
 
         self.text_area = tk.Text(self)
         self.text_area.grid(row=0, column=1)
-
 
         self.y_scrollbar = tk.Scrollbar(self)
         self.y_scrollbar.config(command=self.text_area.yview)
@@ -56,9 +56,20 @@ class NotebookTab(ttk.Frame):
         self.text_area.bind("<Shift-ISO_Left_Tab>", self._shift_tab_event)
         self.text_area.bind("<Control-a>", self._control_a_event)
         self.text_area.bind("<Control-A>", self._control_a_event)
+        self.text_area.bind("<Key>", self._key_event)
+
+        if file:
+            with open(file, "r") as f:
+                file_content = f.read()
+            self.text_area.insert("1.0", file_content)
+
+    def _key_event(self, event):
+        if self.text_area.edit_modified():
+            self.master.tab(self.master.select(), text=self.title+" *")
 
     def _tab_event(self, event):
         self.text_area.insert(tk.INSERT, " " * 4)
+        self._key_event(event)
         return 'break'
 
     def _shift_tab_event(self, event):
@@ -84,6 +95,17 @@ class NotebookTab(ttk.Frame):
 
             self.last_line_number = line
 
+    def save_file(self):
+        if self.file and os.path.exists(self.file):
+            with open(self.file, "w") as f:
+                f.write(self.text_area.get(1.0, tk.END)[:-1]) # Text.get adds \n to the end, so this must be cut with [:-1]
+            self.master.tab(self.master.select(), text=self.title)
+        else:
+            self.file = filedialog.asksaveasfilename(initialdir = "",title = "Save File",filetypes = (("python files","*.py"),("all files","*.*")))
+            with open(self.file, "w") as f:
+                f.write(self.text_area.get(1.0, tk.END))
+            self.title = os.path.basename(self.file)
+            self.master.tab(self.master.select(), text=self.title)
 
 class Editor(tk.Frame):
     def __init__(self, master):
@@ -94,8 +116,7 @@ class Editor(tk.Frame):
         self.notebook_tabs = []
         self.notebook = ttk.Notebook(self)
         self.notebook.grid(row=0)
-        self.add_tab()
-        self.add_tab()
+        self.new_tab()
 
         self.line_number_update_timer()
 
@@ -108,10 +129,11 @@ class Editor(tk.Frame):
         self.selected_tab_object().update_line_numbers()
         self.master.after(60, self.line_number_update_timer)
 
-    def add_tab(self, title="untitled *", file=None):
-        new_tab = NotebookTab(self.notebook, title)
+    def _add_tab(self, title, file):
+        new_tab = NotebookTab(self.notebook, title, file)
         self.notebook_tabs.append(new_tab)
         self.notebook.add(new_tab, text=title)
+        self.notebook.select(new_tab)
 
     def selected_tab_index(self):
         return self.notebook.index(self.notebook.select())
@@ -123,9 +145,9 @@ class Editor(tk.Frame):
         self.set_repl_visible()
         self.u_serial.run(self.selected_tab_object().text_area.get(1.0, tk.END).encode())
 
-    def new_tab(self):
+    def new_tab(self, title="untitled", file=None):
         if len(self.notebook_tabs) < 10:
-            self.add_tab()
+            self._add_tab(title, file)
 
     def toggle_repl(self):
         if self.repl_visible:
@@ -148,6 +170,13 @@ class Editor(tk.Frame):
         serial_devices = [os.path.realpath(os.path.join("/dev/serial/by-path/", x)) for x in serial_devices]
         return serial_devices
 
+    def save_file(self):
+        self.selected_tab_object().save_file()
+
+    def load_file(self):
+        file_path = filedialog.askopenfilename(initialdir = "",title = "Load file",filetypes = (("python files","*.py"),("all files","*.*")))
+        if os.path.exists(file_path):
+            self.new_tab(file=file_path, title=os.path.basename(file_path))
 
 
 class FileManager(tk.Frame):
@@ -192,7 +221,6 @@ class Repl(tk.Frame):
         self.repl_text_field.bind("<Control-E>", self._ctrl_e_event)
 
         self.serial_thread = SerialThread(self, u_serial)
-       
 
     def _key_event(self, event):
         if event.keysym == "Left" and self.repl_text_field.compare(self.repl_text_field.index(tk.INSERT), '==', self.repl_stop):
@@ -245,7 +273,7 @@ class Toolbar(tk.Frame):
 
         self._add_button("new", "img/new.png")
         self._add_button("load_file", "img/load_file.png")
-        self._add_button("save", "img/save.png")
+        self._add_button("save_file", "img/save.png")
         self._add_separator("separator_1")
         self._add_separator("separator_2")
         self._add_button("run", "img/run.png")
@@ -326,7 +354,6 @@ class uSerial:
             self.serial.write(command_bytes[i:min(i + 256, len(command_bytes))])
             sleep(0.01)
         self.serial.write(b'\x04')
-        print("Sending", command.decode())
 
 
 class SerialThread(threading.Thread):
@@ -354,19 +381,15 @@ class SerialThread(threading.Thread):
             incoming_bytes = []
             if not self.repl.send_queue.empty():
                 message = self.repl.send_queue.get()
-                print("Sending: ", message)
                 self.u_serial.write(message)
             if self.u_serial.inWaiting():
                 while self.u_serial.inWaiting():
                     incoming_bytes.append(self.u_serial.read(1))
-                print("Receiving: ", end=" ")
                 for index, byte in enumerate(incoming_bytes):
                     if ord(byte) < 128:
                         incoming_bytes[index] = byte.decode()
-                        print(ord(byte), end=" ")
                     else:
                         incoming_bytes[index] = "$"
-                print("")
 
                 incoming_message = "".join(incoming_bytes).replace("\r", "")
                 self.repl.repl_text_field.insert(tk.END, incoming_message)
@@ -398,6 +421,8 @@ class Application(tk.Frame):
         self.tool_bar.buttons["run"].config(command=self.editor.run_tab)
         self.tool_bar.buttons["new"].config(command=self.editor.new_tab)
         self.tool_bar.buttons["repl"].config(command=self.editor.toggle_repl)
+        self.tool_bar.buttons["load_file"].config(command=self.editor.load_file)
+        self.tool_bar.buttons["save_file"].config(command=self.editor.save_file)
 
 def run():
     root = tk.Tk()
