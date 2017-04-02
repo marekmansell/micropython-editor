@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 import serial # requires installing
+import serial.tools.list_ports
 from time import sleep, time
 import threading 
 from PIL import Image, ImageTk # requires installing
@@ -52,7 +53,7 @@ class NotebookTab(ttk.Frame):
         self.update_line_numbers()
 
         self.text_area.bind("<Tab>", self._tab_event)
-        self.text_area.bind("<Shift-ISO_Left_Tab>", self._shift_tab_event)
+        # self.text_area.bind("<Shift-ISO_Left_Tab>", self._shift_tab_event)
         self.text_area.bind("<Control-a>", self._control_a_event)
         self.text_area.bind("<Control-A>", self._control_a_event)
         self.text_area.bind("<Key>", self._key_event)
@@ -117,6 +118,11 @@ class SerialSetupWindow(tk.Toplevel):
 
         if sys.platform == "linux":
             self.usb_devices = self._get_usb_devices_linux()
+
+        if sys.platform == "win32":
+            ports = list(serial.tools.list_ports.comports())
+            self.usb_devices = [dev.device for dev in ports]
+
         
         buttons = []
         for i, device in enumerate(self.usb_devices):
