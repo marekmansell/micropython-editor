@@ -116,25 +116,18 @@ class SerialSetupWindow(tk.Toplevel):
         self.grab_set()
         self.command = command
 
-        if sys.platform == "linux":
-            self.usb_devices = self._get_usb_devices_linux()
+        if sys.platform == "linux":          
+            ports = list(serial.tools.list_ports.comports())
+            self.usb_devices = [dev.device for dev in ports if "USB" in dev.hwid]
 
         if sys.platform == "win32":
             ports = list(serial.tools.list_ports.comports())
             self.usb_devices = [dev.device for dev in ports]
 
-        
         buttons = []
         for i, device in enumerate(self.usb_devices):
             buttons.append(tk.Button(self, text=device, command=lambda dev=device: self.button_pressed(dev)))
             buttons[-1].grid()
-
-    def _get_usb_devices_linux(self):
-        serial_devices = subprocess.check_output("ls /dev/serial/by-path/; exit 0", stderr=subprocess.STDOUT, shell=True)
-        serial_devices = serial_devices.decode().strip().split("\n")
-        serial_devices = [x.strip() for x in serial_devices]
-        serial_devices = [os.path.realpath(os.path.join("/dev/serial/by-path/", x)) for x in serial_devices]
-        return serial_devices
 
     def button_pressed(self, device):
         self.command(device)
