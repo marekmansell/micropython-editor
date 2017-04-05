@@ -141,6 +141,7 @@ class Editor(tk.Frame):
         self.master = master
         self.grid_columnconfigure(0, weight=1)
         self.repl = None
+        self.u_serial = None
 
         self.notebook_tabs = []
         self.notebook = ttk.Notebook(self)
@@ -159,6 +160,8 @@ class Editor(tk.Frame):
     def connect(self, device):
         if self.repl:
             self.repl.destroy()
+        if self.u_serial:
+            self.u_serial.close()
         self.u_serial = uSerial(device)
         self.repl = Repl(self, self.u_serial)
         self.master.change_title(device)
@@ -341,6 +344,8 @@ class Toolbar(tk.Frame):
 class uSerial:
     def __init__(self, port):
         self.serial = serial.Serial(port, baudrate=115200, timeout=.2)
+        self.serial.write(b'\r\x03\x03') # ctrl-C twice: interrupt any running program
+        self.serial.write(b'\x04') # ctrl-D: soft reset
         self.serial.flushInput()
 
     def read(self, num):
