@@ -140,6 +140,7 @@ class Editor(tk.Frame):
         super().__init__(master)
         self.master = master
         self.grid_columnconfigure(0, weight=1)
+        self.repl = None
 
         self.notebook_tabs = []
         self.notebook = ttk.Notebook(self)
@@ -156,9 +157,11 @@ class Editor(tk.Frame):
         SerialSetupWindow(self, self.connect)
 
     def connect(self, device):
-        self.master.change_title(device)
+        if self.repl:
+            self.repl.destroy()
         self.u_serial = uSerial(device)
         self.repl = Repl(self, self.u_serial)
+        self.master.change_title(device)
 
     def line_number_update_timer(self):
         self.selected_tab_object().update_line_numbers()
@@ -290,6 +293,9 @@ class Repl(tk.Frame):
     def _ctrl_e_event(self, event):
         self.send_queue.put(chr(5).encode())
         return "break"
+
+    def destroy(self):
+        self.grid_remove()
 
 
 class Toolbar(tk.Frame):
