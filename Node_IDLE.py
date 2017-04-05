@@ -422,8 +422,8 @@ class SerialThread(threading.Thread):
 
                 incoming_message = "".join(incoming_bytes).replace("\r", "")
                 self.repl.repl_text_field.insert(tk.END, incoming_message)
-                self.repl.repl_text_field.see(tk.END)
                 self.repl.repl_text_field.mark_set(tk.INSERT, tk.END)
+                self.repl.repl_text_field.see(tk.END)
                 # if self.text_color == "grey":
                 #     self.repl.repl_text_field.tag_add("grey", self.repl.repl_stop, tk.END)
                 #     self.repl.repl_text_field.tag_config("grey", foreground="grey")
