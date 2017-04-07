@@ -148,8 +148,13 @@ class Editor(tk.Frame):
         self.repl = None
         self.u_serial = None
 
+        self.tab_close_style()  # for tab closing
+
         self.notebook_tabs = []
-        self.notebook = ttk.Notebook(self)
+        self.notebook = ttk.Notebook(self, style="ButtonNotebook") # 'style' for tab closing
+        self.notebook.pressed_index = None  # for tab closing
+        self.notebook.bind("<ButtonPress-1>", self.btn_press)  # for tab closing
+        self.notebook.bind("<ButtonRelease-1>", self.btn_release)  # for tab closing
         self.notebook.grid(row=0, sticky="nsew")
         self.notebook.columnconfigure(0, weight=1)
         self.notebook.rowconfigure(0, weight=1)
@@ -160,6 +165,64 @@ class Editor(tk.Frame):
         self.repl_visible = False
         
         self.setup_device()
+
+    def tab_close_style(self): # for tab closing
+        imgdir = os.path.join(os.path.dirname(__file__), 'img')
+        self.i1 = tk.PhotoImage("img_close", file=os.path.join(imgdir, 'close.gif'))
+        self.i2 = tk.PhotoImage("img_closeactive",
+            file=os.path.join(imgdir, 'close_active.gif'))
+        self.i3 = tk.PhotoImage("img_closepressed",
+            file=os.path.join(imgdir, 'close_pressed.gif'))
+
+        style = ttk.Style()
+
+        style.element_create("close", "image", "img_close",
+            ("active", "pressed", "!disabled", "img_closepressed"),
+            ("active", "!disabled", "img_closeactive"), border=8, sticky='')
+
+        style.layout("ButtonNotebook", [("ButtonNotebook.client", {"sticky": "nswe"})])
+        style.layout("ButtonNotebook.Tab", [
+            ("ButtonNotebook.tab", {"sticky": "nswe", "children":
+                [("ButtonNotebook.padding", {"side": "top", "sticky": "nswe",
+                                             "children":
+                    [("ButtonNotebook.focus", {"side": "top", "sticky": "nswe",
+                                               "children":
+                        [("ButtonNotebook.label", {"side": "left", "sticky": ''}),
+                         ("ButtonNotebook.close", {"side": "left", "sticky": ''})]
+                    })]
+                })]
+            })]
+        )
+
+    def btn_release(self, event):  # for tab closing
+        x, y, widget = event.x, event.y, event.widget
+
+        if not widget.instate(['pressed']):
+            return
+
+
+
+        elem =  widget.identify(x, y)
+        index = widget.index("@%d,%d" % (x, y))
+
+        if "close" in elem and widget.pressed_index == index:
+            widget.forget(index)
+            widget.event_generate("<<NotebookClosedTab>>")
+
+        widget.state(["!pressed"])
+        self.notebook_tabs.pop(widget.pressed_index)
+        widget.pressed_index = None
+        if len(self.notebook_tabs) == 0:
+            self.new_tab()
+
+    def btn_press(self, event):  # for tab closing
+        x, y, widget = event.x, event.y, event.widget
+        elem = widget.identify(x, y)
+        index = widget.index("@%d,%d" % (x, y))
+
+        if "close" in elem:
+            widget.state(['pressed'])
+            widget.pressed_index = index
 
     def setup_device(self):
         SerialSetupWindow(self, self.connect)
@@ -173,6 +236,7 @@ class Editor(tk.Frame):
         self.repl = Repl(self, self.u_serial)
         self.toggle_repl()
         self.master.change_title(device)
+        self.master.bottom_status_bar.change_status(device)
 
     def line_number_update_timer(self):
         self.selected_tab_object().update_line_numbers()
@@ -458,6 +522,19 @@ class SerialThread(threading.Thread):
 
         return
 
+class StatusBar(tk.Frame):
+    def __init__(self, master):
+        super().__init__(master)
+        self.label = tk.Label(self)
+        self.label.grid()
+        self.change_status()
+
+    def change_status(self, new_device=None):
+        self.device_name = new_device
+        if self.device_name is None:
+            self.label.config(text="Not connected. Try the 'Connect' button in the toolbar.")
+        else:
+            self.label.config(text="Connected to: {}".format(self.device_name))
 
 class Application(tk.Frame):
     def __init__(self, root):
@@ -478,6 +555,9 @@ class Application(tk.Frame):
     
         self.tool_bar = Toolbar(self)
         self.tool_bar.grid(row=0, sticky="w")
+
+        self.bottom_status_bar = StatusBar(self)
+        self.bottom_status_bar.grid(row=2, sticky="ew")
 
         self.tool_bar.buttons["run"].config(command=self.editor.run_tab)
         self.tool_bar.buttons["new"].config(command=self.editor.new_tab)
