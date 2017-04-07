@@ -26,18 +26,21 @@ class NotebookTab(ttk.Frame):
         self.title = title
         self.file = file
 
+        self.rowconfigure(0, weight=1) 
+        self.columnconfigure(1, weight=1)
+
         self.text_area = tk.Text(self)
-        self.text_area.grid(row=0, column=1)
+        self.text_area.grid(row=0, column=1, sticky="nsew")
 
         self.y_scrollbar = tk.Scrollbar(self)
         self.y_scrollbar.config(command=self.text_area.yview)
-        self.y_scrollbar.grid(row=0, column=2, sticky=tk.N+tk.S)
+        self.y_scrollbar.grid(row=0, column=2, sticky="nsew")
         self.x_scrollbar = tk.Scrollbar(self)
         self.x_scrollbar.config(command=self.text_area.xview, orient=tk.HORIZONTAL)
-        self.x_scrollbar.grid(row=1, column=1, sticky=tk.E+tk.W)
+        self.x_scrollbar.grid(row=1, column=1, sticky="nsew")
 
         self.line_numbers = tk.Canvas(self, width=28)
-        self.line_numbers.grid(row=0, column=0, sticky=tk.N+tk.S)
+        self.line_numbers.grid(row=0, column=0, sticky="ns")
 
         self.text_area.config(
             # bg="black",  # background color
@@ -61,6 +64,7 @@ class NotebookTab(ttk.Frame):
         if file:
             with open(file, "r") as f:
                 file_content = f.read()
+                file_content = file_content.replace("\t", 4*" ")
             self.text_area.insert("1.0", file_content)
 
     def _key_event(self, event):
@@ -139,13 +143,16 @@ class Editor(tk.Frame):
     def __init__(self, master):
         super().__init__(master)
         self.master = master
-        self.grid_columnconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
         self.repl = None
         self.u_serial = None
 
         self.notebook_tabs = []
         self.notebook = ttk.Notebook(self)
-        self.notebook.grid(row=0)
+        self.notebook.grid(row=0, sticky="nsew")
+        self.notebook.columnconfigure(0, weight=1)
+        self.notebook.rowconfigure(0, weight=1)
         self.new_tab()
 
         self.line_number_update_timer()
@@ -164,6 +171,7 @@ class Editor(tk.Frame):
             self.u_serial.close()
         self.u_serial = uSerial(device)
         self.repl = Repl(self, self.u_serial)
+        self.toggle_repl()
         self.master.change_title(device)
 
     def line_number_update_timer(self):
@@ -198,7 +206,7 @@ class Editor(tk.Frame):
 
     def set_repl_visible(self):
         self.repl_visible = True
-        self.repl.grid(row=1, sticky=tk.W+tk.E)
+        self.repl.grid(row=1, sticky="we")
 
     def set_repl_invisible(self):
         self.repl_visible = False
@@ -218,7 +226,7 @@ class FileManager(tk.Frame):
         super().__init__(master)
         self.grid_columnconfigure(0, weight=1)
         self.t = tk.Text(self)
-        self.t.grid(row=0, sticky=tk.W+tk.E+tk.S+tk.N)
+        self.t.grid(row=0, sticky="nsew")
 
 
 class Repl(tk.Frame):
@@ -226,9 +234,9 @@ class Repl(tk.Frame):
         super().__init__(master)
         self.grid_columnconfigure(0, weight=1)
         self.repl_text_field = tk.Text(self)
-        self.repl_text_field.grid(row=0, column=0, sticky=tk.W+tk.E)
+        self.repl_text_field.grid(row=0, column=0, sticky="ew")
         self.repl_scrollbar = tk.Scrollbar(self)
-        self.repl_scrollbar.grid(row=0, column=1, sticky=tk.N+tk.S)
+        self.repl_scrollbar.grid(row=0, column=1, sticky="ns")
         self.repl_scrollbar.config(command=self.repl_text_field.yview)
         self.repl_stop = self.repl_text_field.index("end")
         self.send_queue = queue.Queue()
@@ -303,20 +311,21 @@ class Repl(tk.Frame):
 
 class Toolbar(tk.Frame):
     def __init__(self, master):
-        super().__init__(master, borderwidth=2)
+        super().__init__(master, borderwidth=2, height=False)
 
         self.images = []
         self.buttons = {}
+        self.labels = {}
 
-        self._add_button("new", "img/new.png")
-        self._add_button("load_file", "img/load_file.png")
-        self._add_button("save_file", "img/save.png")
+        self._add_button("new", "New", "img/new.png")
+        self._add_button("load_file", "Load", "img/load_file.png")
+        self._add_button("save_file", "Save", "img/save.png")
         self._add_separator("separator_1")
         self._add_separator("separator_2")
-        self._add_button("run", "img/run.png")
-        self._add_button("repl", "img/repl.png")
-        self._add_button("files", "img/files.png")
-        self._add_button("device", "img/device.png")
+        self._add_button("run", "Run", "img/run.png")
+        self._add_button("repl", "REPL", "img/repl.png")
+        self._add_button("files", "Storage", "img/files.png")
+        self._add_button("device", "Connect", "img/device.png")
 
 
     def _load_image(self, img_file):
@@ -330,14 +339,19 @@ class Toolbar(tk.Frame):
         self.images.append(img)
         return self.images[-1]
 
-    def _add_button(self, name, img_file):
-        new_button = tk.Button(self, image=self._load_image(img_file))
+    def _add_button(self, name, label_text, img_file):
+        new_button = tk.Button(self, image=self._load_image(img_file), border=0)
         new_button.grid(row=0, column=len(self.buttons))
+
+        new_label = tk.Label(self, text=label_text)
+        new_label.grid(row=1, column=len(self.buttons))
+
         self.buttons[name] = new_button
+        self.labels[name] = new_label
 
     def _add_separator(self, name):
         new_separator = ttk.Separator(self,orient=tk.VERTICAL)
-        new_separator.grid(row=0, column=len(self.buttons), sticky=tk.N+tk.S)
+        new_separator.grid(row=0, column=len(self.buttons), sticky="ns")
         self.buttons[name] = new_separator
 
 
@@ -450,15 +464,20 @@ class Application(tk.Frame):
         super().__init__(root)
         self.title = "MicroPython Editor"
         self.root = root
+
+        root.rowconfigure(0, weight=1) 
+        root.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1) 
+        self.columnconfigure(0, weight=1)
+        self.grid(sticky="nsew")
+
         self.change_title()
-        self.grid()
-        self.grid_columnconfigure(0, weight=1)
 
         self.editor = Editor(self)
-        self.editor.grid(row=1)
+        self.editor.grid(row=1, sticky="nsew")
     
         self.tool_bar = Toolbar(self)
-        self.tool_bar.grid(row=0, sticky=tk.W)
+        self.tool_bar.grid(row=0, sticky="w")
 
         self.tool_bar.buttons["run"].config(command=self.editor.run_tab)
         self.tool_bar.buttons["new"].config(command=self.editor.new_tab)
