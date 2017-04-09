@@ -41,5 +41,9 @@ The project is open-source, so feel free to use it, test it or develop it!
 
 This project works with Python3, tkinter, Pillow and pyserial
 
+Installing requirements::
+
+   pip install -r requirements.txt
+
 
 
