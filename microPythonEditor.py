@@ -259,6 +259,7 @@ class Editor(tk.Frame):
         self.toggle_repl(True) # set REPL to visible
         self.master.update_title(device)
         self.master.bottom_status_bar.change_status(device)
+        self.master.tool_bar.update_device_image(alert=False)
         self.master.root.lift() # After connecting to a device, ensure the Editor is on the top
 
     def line_number_update_timer(self):
@@ -279,29 +280,38 @@ class Editor(tk.Frame):
 
     def run_tab(self):
         self.set_repl_visible()
-        self.u_serial.run(self.selected_tab_object().text_area.get(1.0, tk.END).encode())
+        if self.u_serial:
+            self.u_serial.run(self.selected_tab_object().text_area.get(1.0, tk.END).encode())
 
     def new_tab(self, title="untitled", file=None):
         if len(self.notebook_tabs) < 10:
             self._add_tab(title, file)
 
     def toggle_repl(self, visibility=None):
-        if self.repl:
-            if visibility is None:    
-                if self.repl_visible:
-                    self.set_repl_invisible()
-                else:
-                    self.set_repl_visible()
-            elif visibility:
-                self.set_repl_visible()
-            else:
+        if not self.repl:
+            return
+        
+        if visibility is None:    
+            if self.repl_visible:
                 self.set_repl_invisible()
+            else:
+                self.set_repl_visible()
+        elif visibility:
+            self.set_repl_visible()
+        else:
+            self.set_repl_invisible()
 
     def set_repl_visible(self):
+        if not self.repl:
+            return
+
         self.repl_visible = True
         self.repl.grid(row=1, sticky="we")
 
     def set_repl_invisible(self):
+        if not self.repl:
+            return
+        
         self.repl_visible = False
         self.repl.grid_remove()
 
@@ -404,7 +414,9 @@ class Repl(tk.Frame):
         if wait_for_thread_join:
             self.serial_thread.join()
         self.master.u_serial.close()
+        self.master.u_serial = None
         self.master.master.update_title(None)
+        self.master.master.tool_bar.update_device_image(alert=True)
         self.master.master.bottom_status_bar.change_status(None)
         self.master.repl = None
 
@@ -413,7 +425,7 @@ class Toolbar(tk.Frame):
     def __init__(self, master):
         super().__init__(master, borderwidth=2, height=False)
 
-        self.images = []
+        self.images = {}
         self.buttons = {}
         self.labels = {}
 
@@ -425,7 +437,8 @@ class Toolbar(tk.Frame):
         self._add_button("run", "Run", "img/run.png")
         self._add_button("repl", "REPL", "img/repl.png")
         self._add_button("files", "Storage", "img/files.png")
-        self._add_button("device", "Connect", "img/device.png")
+        self._add_button("device", "Connect", "img/device_alert.png")
+        self._load_image("img/device.png")
 
 
     def _load_image(self, img_file):
@@ -436,8 +449,8 @@ class Toolbar(tk.Frame):
         img = ImageTk.PhotoImage(img)
         
         # The image must be stored somewhere forever
-        self.images.append(img)
-        return self.images[-1]
+        self.images[img_file] = img
+        return self.images[img_file]
 
     def _add_button(self, name, label_text, img_file):
         new_button = tk.Button(self, image=self._load_image(img_file), border=0)
@@ -453,6 +466,12 @@ class Toolbar(tk.Frame):
         new_separator = ttk.Separator(self,orient=tk.VERTICAL)
         new_separator.grid(row=0, column=len(self.buttons), sticky="ns")
         self.buttons[name] = new_separator
+
+    def update_device_image(self, alert):
+        if alert:
+            self.buttons["device"].config(image=self.images["img/device_alert.png"])
+        else:
+            self.buttons["device"].config(image=self.images["img/device.png"])
 
 
 class uSerial(serial.Serial):
