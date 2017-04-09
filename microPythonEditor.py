@@ -19,6 +19,15 @@ logging.basicConfig(level=logging.DEBUG,
                     format='(%(threadName)-10s) %(message)s',
                     )
 
+def center_window(window):
+    window.update_idletasks()
+    w = window.winfo_screenwidth()
+    h = window.winfo_screenheight()
+    size = tuple(int(_) for _ in window.geometry().split('+')[0].split('x'))
+    x = w/2 - size[0]/2
+    y = h/2 - size[1]/2
+    window.geometry("%dx%d+%d+%d" % (size + (x, y)))
+
 class NotebookTab(ttk.Frame):
     def __init__(self, master, title, file):
         super().__init__(master)
@@ -115,28 +124,41 @@ class NotebookTab(ttk.Frame):
 class SerialSetupWindow(tk.Toplevel):
     def __init__(self, master, command):
         super().__init__(master)
-        self.title("Connect to MicroPython serial device")
+        self.title("Connect to Serial Device")
         self.attributes("-topmost", True)
         self.grab_set()
+        self.minsize(400, 100)
+        self.columnconfigure(0, weight=1)
+        self.resizable(0, 0) # disable resizing by user
         self.command = command
+        self.usb_devices = None
+        self.buttons = []
 
-        if sys.platform == "linux":          
-            ports = list(serial.tools.list_ports.comports())
-            self.usb_devices = [dev.device for dev in ports if "USB" in dev.hwid]
-
-        if sys.platform == "win32":
-            ports = list(serial.tools.list_ports.comports())
-            self.usb_devices = [dev.device for dev in ports]
-
-        buttons = []
-        for i, device in enumerate(self.usb_devices):
-            buttons.append(tk.Button(self, text=device, command=lambda dev=device: self.button_pressed(dev)))
-            buttons[-1].grid()
+        center_window(self)
+        self.update_serial_devices()
 
     def button_pressed(self, device):
         self.command(device)
         self.grab_release() # to return to normal
         self.destroy()
+
+    def get_serial_devices(self):
+        ports = list(serial.tools.list_ports.comports()) # get all serial devices
+        return [dev.device for dev in ports if "USB" in dev.hwid] # return a list of their names (COMx or dev/ttyUSBx)
+        # return [dev.device for dev in ports]
+
+    def update_serial_devices(self):
+        usb_devices = self.get_serial_devices()
+        if usb_devices != self.usb_devices:
+            self.usb_devices = usb_devices
+            for button in self.buttons:
+                button.grid_forget()
+            self.buttons = []
+            for i, device in enumerate(self.usb_devices):
+                self.buttons.append(tk.Button(self, text=device, command=lambda dev=device: self.button_pressed(dev)))
+                self.buttons[-1].grid(sticky="ew")
+
+        self.after(1000, self.update_serial_devices)
 
 
 class Editor(tk.Frame):
@@ -229,14 +251,15 @@ class Editor(tk.Frame):
 
     def connect(self, device):
         if self.repl:
-            self.repl.destroy()
+            self.repl.disconnect()
         if self.u_serial:
             self.u_serial.close()
         self.u_serial = uSerial(device)
         self.repl = Repl(self, self.u_serial)
-        self.toggle_repl()
-        self.master.change_title(device)
+        self.toggle_repl(True) # set REPL to visible
+        self.master.update_title(device)
         self.master.bottom_status_bar.change_status(device)
+        self.master.root.lift() # After connecting to a device, ensure the Editor is on the top
 
     def line_number_update_timer(self):
         self.selected_tab_object().update_line_numbers()
@@ -262,11 +285,17 @@ class Editor(tk.Frame):
         if len(self.notebook_tabs) < 10:
             self._add_tab(title, file)
 
-    def toggle_repl(self):
-        if self.repl_visible:
-            self.set_repl_invisible()
-        else:
-            self.set_repl_visible()
+    def toggle_repl(self, visibility=None):
+        if self.repl:
+            if visibility is None:    
+                if self.repl_visible:
+                    self.set_repl_invisible()
+                else:
+                    self.set_repl_visible()
+            elif visibility:
+                self.set_repl_visible()
+            else:
+                self.set_repl_invisible()
 
     def set_repl_visible(self):
         self.repl_visible = True
@@ -369,8 +398,15 @@ class Repl(tk.Frame):
         self.send_queue.put(chr(5).encode())
         return "break"
 
-    def destroy(self):
+    def disconnect(self, wait_for_thread_join=True):
         self.grid_remove()
+        self.serial_thread.isRunning = False
+        if wait_for_thread_join:
+            self.serial_thread.join()
+        self.master.u_serial.close()
+        self.master.master.update_title(None)
+        self.master.master.bottom_status_bar.change_status(None)
+        self.master.repl = None
 
 
 class Toolbar(tk.Frame):
@@ -419,27 +455,13 @@ class Toolbar(tk.Frame):
         self.buttons[name] = new_separator
 
 
-class uSerial:
+class uSerial(serial.Serial):
     def __init__(self, port):
-        self.serial = serial.Serial(port, baudrate=115200, timeout=.2)
-        self.serial.write(b'\r\x03\x03') # ctrl-C twice: interrupt any running program
-        self.serial.write(b'\x04') # ctrl-D: soft reset
-        self.serial.flushInput()
-
-    def read(self, num):
-        return self.serial.read(num)
-        
-    def inWaiting(self):
-        return self.serial.inWaiting()
-
-    def write(self,msg):
-        self.serial.write(msg)
-
-    def is_open(self):
-        return self.serial.is_open
-
-    def close(self):
-        self.serial.close()
+        super().__init__(port, baudrate=115200, timeout=.2)
+        self.write(b'\r\x03\x03') # ctrl-C twice: interrupt any running program
+        self.write(b'\x04') # ctrl-D: soft reset
+        sleep(.2) # wait for the device to send a reply
+        self.flushInput() # flush the reply
 
     def run(self, command):
         self.enter_raw_repl()
@@ -452,26 +474,26 @@ class uSerial:
         self.run(pyfile)
 
     def enter_raw_repl(self):
-        self.serial.write(b'\r\x03\x03') # ctrl-C twice: interrupt any running program
+        self.write(b'\r\x03\x03') # ctrl-C twice: interrupt any running program
 
-        self.serial.flushInput()
+        self.flushInput()
 
-        self.serial.write(b'\r\x01') # ctrl-A: enter raw REPL
+        self.write(b'\r\x01') # ctrl-A: enter raw REPL
         sleep(.1)
-        self.serial.write(b'\x04') # ctrl-D: soft reset
+        self.write(b'\x04') # ctrl-D: soft reset
         sleep(.5)
 
     def exit_raw_repl(self):
-        self.serial.write(b'\r\x02') # ctrl-B: enter friendly REPL
+        self.write(b'\r\x02') # ctrl-B: enter friendly REPL
 
     def exec(self, command):
         command_bytes = command.rstrip() + b"\n\r"
 
         # write command
         for i in range(0, len(command_bytes), 256):
-            self.serial.write(command_bytes[i:min(i + 256, len(command_bytes))])
+            self.write(command_bytes[i:min(i + 256, len(command_bytes))])
             sleep(0.01)
-        self.serial.write(b'\x04')
+        self.write(b'\x04')
 
 
 class SerialThread(threading.Thread):
@@ -481,44 +503,50 @@ class SerialThread(threading.Thread):
         self.name = "SerialThread"
         self.repl = repl
         self.u_serial = u_serial
+        self.isRunning = True
         self.start()
 
     def run(self):
         logging.info('SerialThread Started')
         
-        if self.u_serial.is_open():
+        if self.u_serial.is_open:
             logging.info("Serial opened")
         else:
             logging.critical("Serial could not be open")
             return
 
-        sleep(.2)
-        self.u_serial.write(chr(4).encode())
+        self.u_serial.write(b'\x04') # soft reset - the reply is the first thing printed in the REPL area
         
-        while True:
-            incoming_bytes = []
-            if not self.repl.send_queue.empty():
-                message = self.repl.send_queue.get()
-                self.u_serial.write(message)
-            if self.u_serial.inWaiting():
-                while self.u_serial.inWaiting():
-                    incoming_bytes.append(self.u_serial.read(1))
-                for index, byte in enumerate(incoming_bytes):
-                    if ord(byte) < 128:
-                        incoming_bytes[index] = byte.decode()
-                    else:
-                        incoming_bytes[index] = "$"
+        while self.isRunning:
+            try:
+                incoming_bytes = []
+                if not self.repl.send_queue.empty():
+                    message = self.repl.send_queue.get()
+                    self.u_serial.write(message)
+                if self.u_serial.inWaiting():
+                    while self.u_serial.inWaiting():
+                        incoming_bytes.append(self.u_serial.read(1))
+                    for index, byte in enumerate(incoming_bytes):
+                        if ord(byte) < 128:
+                            incoming_bytes[index] = byte.decode()
+                        else:
+                            incoming_bytes[index] = "$"
 
-                incoming_message = "".join(incoming_bytes).replace("\r", "")
-                self.repl.repl_text_field.insert(tk.END, incoming_message)
-                self.repl.repl_text_field.mark_set(tk.INSERT, tk.END)
-                self.repl.repl_text_field.see(tk.END)
-                # if self.text_color == "grey":
-                #     self.repl.repl_text_field.tag_add("grey", self.repl.repl_stop, tk.END)
-                #     self.repl.repl_text_field.tag_config("grey", foreground="grey")
-                self.repl.repl_stop = self.repl.repl_text_field.index("end-1c")
-            else:
-                sleep(.01)
+                    incoming_message = "".join(incoming_bytes).replace("\r", "")
+                    self.repl.repl_text_field.insert(tk.END, incoming_message)
+                    self.repl.repl_text_field.mark_set(tk.INSERT, tk.END)
+                    self.repl.repl_text_field.see(tk.END)
+                    # if self.text_color == "grey":
+                    #     self.repl.repl_text_field.tag_add("grey", self.repl.repl_stop, tk.END)
+                    #     self.repl.repl_text_field.tag_config("grey", foreground="grey")
+                    self.repl.repl_stop = self.repl.repl_text_field.index("end-1c")
+                else:
+                    sleep(.01)
+            except Exception as e:
+                print("Serial Thread Exception !!!")
+                self.isRunning = False
+                self.repl.disconnect(False)
+
 
         return
 
@@ -542,25 +570,36 @@ class Application(tk.Frame):
         self.title = "MicroPython Editor"
         self.root = root
 
-        root.minsize(500, 500)
+        root.minsize(500, 500) # main window can not be smaller than 500x500 px
+        
+        # Set main window size to 60% of the screen size
+        width = root.winfo_screenwidth() * .6
+        height = root.winfo_screenheight() * .6
+        root.geometry(str(int(width)) + "x" + str(int(height)))
+        
+        center_window(root) # center main window
+        root.protocol("WM_DELETE_WINDOW", self.close_event)
 
+        # makes the area in the main window scalable
         root.rowconfigure(0, weight=1) 
         root.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1) 
-        self.columnconfigure(0, weight=1)
-        self.grid(sticky="nsew")
 
-        self.change_title()
+        self.rowconfigure(1, weight=1) # make the 2nd row (Editor) scalable
+        self.columnconfigure(0, weight=1) # make the 1st (and only) column scalable
+        self.grid(sticky="nsew") # expand Application Frame to the whole window
 
-        self.editor = Editor(self)
-        self.editor.grid(row=1, sticky="nsew")
-    
+        self.update_title(None) # set main window title to the default setting
+
         self.tool_bar = Toolbar(self)
         self.tool_bar.grid(row=0, sticky="w")
+    
+        self.editor = Editor(self)
+        self.editor.grid(row=1, sticky="nsew")
 
         self.bottom_status_bar = StatusBar(self)
         self.bottom_status_bar.grid(row=2, sticky="ew")
 
+        # Bind Tool Bar buttons with functions from self.editor
         self.tool_bar.buttons["run"].config(command=self.editor.run_tab)
         self.tool_bar.buttons["new"].config(command=self.editor.new_tab)
         self.tool_bar.buttons["repl"].config(command=self.editor.toggle_repl)
@@ -568,11 +607,17 @@ class Application(tk.Frame):
         self.tool_bar.buttons["save_file"].config(command=self.editor.save_file)
         self.tool_bar.buttons["device"].config(command=self.editor.setup_device)
 
-    def change_title(self, device=None):
+    def update_title(self, device=None):
         if device:
             self.root.title("{} - {}".format(self.title, device))
         else:
             self.root.title(self.title)
+
+    def close_event(self):
+        if self.editor.repl:
+            self.editor.repl.disconnect()
+        self.root.destroy()
+
 
 def run():
     root = tk.Tk()

@@ -23,7 +23,7 @@ Features
 What boards can I program?
 ------------------------------------
 
-All microPython boards which have REPL over USB.
+Any microPython board which has REPL over USB support.
 
 Tested boards:
 
@@ -43,7 +43,7 @@ This project works with Python3, tkinter, Pillow and pyserial
 
 Installing requirements::
 
-   pip install -r requirements.txt
+   pip3 install -r requirements.txt
 
 
 
