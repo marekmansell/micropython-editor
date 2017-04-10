@@ -12,6 +12,10 @@ import subprocess
 from tkinter import filedialog
 import sys
 
+from pygments import lex
+from pygments.lexers import PythonLexer
+
+
 # tkinter on scrollbar instead of loo 60ms!!!
 # every single fucking tab!!!!
 
@@ -69,16 +73,43 @@ class NotebookTab(ttk.Frame):
         self.text_area.bind("<Control-a>", self._control_a_event)
         self.text_area.bind("<Control-A>", self._control_a_event)
         self.text_area.bind("<Key>", self._key_event)
+        self.text_area.bind("<KeyRelease>", self._release_key)
 
         if file:
             with open(file, "r") as f:
                 file_content = f.read()
                 file_content = file_content.replace("\t", 4*" ")
             self.text_area.insert("1.0", file_content)
+            self.python_lexer()
+
+    def _set_text_tags(self):
+        self.text_area.tag_config("Token.Text", foreground="black") 
+        self.text_area.tag_config("Token.Error", foreground="red") 
+        self.text_area.tag_config("Token.Keyword", foreground="blue") 
+        self.text_area.tag_config("Token.Operator", foreground="green") 
+        self.text_area.tag_config("Token.Comment", foreground="grey") 
+        self.text_area.tag_config("Token.Name", foreground="black") 
 
     def _key_event(self, event):
         if self.text_area.edit_modified():
             self.master.tab(self.master.select(), text=self.title+" *")
+
+    def _release_key(self, event):
+        self.python_lexer()
+
+    def python_lexer(self):
+        for tag in self.text_area.tag_names():
+            self.text_area.tag_delete(tag)
+        self._set_text_tags()
+        data = self.text_area.get("1.0", "end-1c")
+        self.text_area.mark_set("range_start", "1.0")
+        print("------------------")
+        for token, content in lex(data, PythonLexer()):
+            master_token = ".".join(str(token).split(".")[0:2])
+            self.text_area.mark_set("range_end", "range_start + %dc" % len(content))
+            self.text_area.tag_add(str(master_token), "range_start", "range_end")
+            print(token, len(content), content.encode())
+            self.text_area.mark_set("range_start", "range_end")
 
     def _tab_event(self, event):
         self.text_area.insert(tk.INSERT, " " * 4)
