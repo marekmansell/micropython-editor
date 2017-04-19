@@ -39,7 +39,7 @@ Development
 MicroPython Editor is currently under heavy development, many features and bug-fixes are yet to be added.
 The project is open-source, so feel free to use it, test it or develop it!
 
-This project works with Python3, tkinter, Pillow and pyserial
+This project works with Python3, tkinter, Pillow, pygments and pyserial
 
 Installing requirements::
 
