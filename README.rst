@@ -30,7 +30,12 @@ Tested boards:
 * NodeMCU (ESP8266)
 * WittyBoard (ESP8266)
 
+Planned support for:
+
+* bbc micro:bit
+
 If you have tested the software with different hardware (successfully or not) please let us know!
+If you would like to add support for another board, feel free to cobtribute!
 
 
 Development
@@ -39,11 +44,8 @@ Development
 MicroPython Editor is currently under heavy development, many features and bug-fixes are yet to be added.
 The project is open-source, so feel free to use it, test it or develop it!
 
-This project works with Python3, tkinter, Pillow, pygments and pyserial
+This project is based on Python3 and PyQt5
 
 Installing requirements::
 
    pip3 install -r requirements.txt
-
-
-
