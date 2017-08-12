@@ -1,8 +1,8 @@
 from PyQt5.QtWidgets import (QMainWindow, QDesktopWidget, QTabWidget,
     QMessageBox, QSplitter, QTextEdit, QAction, qApp, QWidget,
     QGridLayout, QPushButton, QFileDialog, QMenu, QApplication)
-from PyQt5.QtGui import (QCloseEvent, QIcon, QColor, QTextCursor, QKeySequence,
-    QCursor)
+from PyQt5.QtGui import (QCloseEvent, QFont, QIcon, QColor, QTextCursor, QKeySequence,
+    QCursor, QFontDatabase)
 from PyQt5.QtCore import QSize, Qt, QUrl, QIODevice
 from PyQt5.Qsci import QsciScintilla
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
@@ -31,8 +31,13 @@ class TextEdit(QsciScintilla):
         self.setMarginsForegroundColor(QColor("grey"))
         self.setIndentationsUseTabs(False)
         self.setIndentationWidth(4)
+        self.setTabWidth(4)
         self.setBraceMatching(True)
         self.textChanged.connect(self._text_changged)
+        self.setWhitespaceVisibility(QsciScintilla.WsVisibleOnlyInIndent)
+        self.setIndentationGuides(1)
+        self.setWhitespaceSize(1)
+        self.setFont(QFont("Courier", 11, 10))
 
     def _text_changged(self):
         self.parent.setModified(True)
