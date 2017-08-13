@@ -1,7 +1,6 @@
 from pathlib import Path
 import os
-from editor.boards import ESP8266, MicroBit, ESP32
-from PyQt5.QtSerialPort import QSerialPort
+from editor.boards import Board
 from PyQt5.QtCore import QIODevice
 from time import sleep
 
@@ -11,29 +10,30 @@ class EditorLogic:
     def __init__(self, main_window):
         self.main_window = main_window
         self.load_save_path = str(Path.home())
-        self.serial = None
+        self.board = None
 
     def toggle_blockly_pane(self):
-        if self.main_window.blockly_pane:
-            self.main_window.rm_blockly_pane()
+        current_state = self.main_window.blockly_pane.isVisible()
+        if current_state:
+            self._exit_blockly_mode()
+            self.main_window.blockly_pane.setVisible(False)
+            self.main_window.top_splitter.setSizes([100,0])
         else:
-            self.main_window.add_blockly_pane()
+            self._enter_blockly_mode()
+            self.main_window.blockly_pane.setVisible(True)
+            self.main_window.top_splitter.setSizes([100,100])
 
     def toggle_storage_pane(self):
-        if self.main_window.storage_pane:
-            self.main_window.rm_storage_pane()
-        elif self.serial:
-            if self.main_window.repl_pane:
-                self.main_window.rm_repl_pane()
-            self.main_window.add_storage_pane()
+        self.main_window.repl_pane.hide()
+        if self.board:
+            current_state = self.main_window.storage_pane.isVisible()
+            self.main_window.storage_pane.setVisible(not current_state)
 
     def toggle_repl_pane(self):
-        if self.main_window.repl_pane:
-            self.main_window.rm_repl_pane()
-        elif self.serial:
-            if self.main_window.storage_pane:
-                self.main_window.rm_storage_pane()
-            self.main_window.add_repl_pane()
+        self.main_window.storage_pane.hide()
+        if self.board:
+            current_state = self.main_window.repl_pane.isVisible()
+            self.main_window.repl_pane.setVisible(not current_state)
 
     def load(self):
         path = self.main_window.get_load_path(self.load_save_path)
@@ -59,65 +59,36 @@ class EditorLogic:
         else:
             tab.path = None
 
-    def connect(self, port="/dev/ttyUSB0"):
+    def connect(self, port="/dev/ttyUSB0", board="ESP8266"):
+
         self.port = port
         # open the serial port
-        self.serial = QSerialPort()
-        self.serial.setPortName("/dev/ttyUSB0")
-        if self.serial.open(QIODevice.ReadWrite):
-            self.serial.setBaudRate(115200)
-            self.serial.readyRead.connect(self._on_serial_read)
-            self._clear_repl() # clear the text
-            self.serial.write(b'\x03') # Send a Control-C
-        else:
-            raise IOError("Cannot connect to device on port {}".format(port))
-
-    def _on_serial_read(self):
-        if self.main_window.repl_pane:
-            self.main_window.repl_pane.on_serial_read()
-
-    def _clear_repl(self):
-        if self.main_window.repl_pane:
-            self.main_window.repl_pane.clear()
-
-    def run(self, command):
-        self.enter_raw_repl()
-        self.exec_(command)
-        self.exit_raw_repl()
+        self.board = Board(port=port, board=board, repl_pane=self.main_window.repl_pane)
+        self.main_window.repl_pane.board = self.board
 
     def run_tab(self):
+        if self.board is None:
+            return
         tab = self.main_window.get_current_tab()
         if tab is None:
             return
-        self.run(tab.text_field.text().strip())
-
-    def enter_raw_repl(self):
-        print("ss")
-        self.serial.write(b'\r\x03\x03') # ctrl-C twice: interrupt any running program
-        self.serial.flush()
-
-        self.serial.clear()
-
-        self.serial.write(b'\r\x01') # ctrl-A: enter raw REPL
-        sleep(.1)
-        self.serial.write(b'\x04') # ctrl-D: soft reset
-        sleep(.5)
-
-    def exit_raw_repl(self):
-        self.serial.write(b'\r\x02') # ctrl-B: enter friendly REPL
-
-    def exec_(self, command):
-        command_bytes = command.encode() + "\n\r".encode()
-
-        # write command
-        for i in range(0, len(command_bytes), 256):
-            self.serial.write(command_bytes[i:min(i + 256, len(command_bytes))])
-            sleep(0.01)
-        self.serial.write(b'\x04')
-        self.serial.flush()
+        self.board.run(bytes(tab.text_field.text().strip(), 'utf8'))
 
     def stop(self):
-        pass
+        if self.board:
+            self.board.stop()
 
     def reset(self):
-        pass
+        if self.board:
+            self.board.reset()
+
+    def _exit_blockly_mode(self):
+        self.main_window.editor_pane.unlock()
+
+    def _enter_blockly_mode(self):
+        self.main_window.new_tab()
+        self.main_window.editor_pane.lock()
+
+    def blockly_update(self, code):
+        self.main_window.get_current_tab().text_field.clear()
+        self.main_window.get_current_tab().text_field.insert(code)

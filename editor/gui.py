@@ -3,10 +3,9 @@ from PyQt5.QtWidgets import (QMainWindow, QDesktopWidget, QTabWidget,
     QGridLayout, QPushButton, QFileDialog, QMenu, QApplication)
 from PyQt5.QtGui import (QCloseEvent, QFont, QIcon, QColor, QTextCursor, QKeySequence,
     QCursor, QFontDatabase)
-from PyQt5.QtCore import QSize, Qt, QUrl, QIODevice
+from PyQt5.QtCore import QSize, Qt, QUrl
 from PyQt5.Qsci import QsciScintilla
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
-from PyQt5.QtSerialPort import QSerialPort
 from editor.resources import load_icon, list_themes, load_theme
 from editor.logic import EditorLogic
 import os
@@ -38,18 +37,20 @@ class TextEdit(QsciScintilla):
         self.setIndentationGuides(1)
         self.setWhitespaceSize(1)
         self.setFont(QFont("Courier", 11, 10))
+        self.setColor(QColor("#bde"))
 
     def _text_changged(self):
         self.parent.setModified(True)
 
 class BlocklyWebPage(QWebEnginePage):
     """Extends QWebEngineView event handling"""
-    def __init__(self):
+    def __init__(self, logic):
         super().__init__()
+        self.logic = logic
 
-    def javaScriptAlert(self, _x, msg):
+    def javaScriptAlert(self, _x, code):
         """Overwrites JavaScript Alert handling"""
-        print(msg)
+        self.logic.blockly_update(code)
 
 class REPLPane(QTextEdit):
     """
@@ -59,9 +60,9 @@ class REPLPane(QTextEdit):
     The device MUST be flashed with MicroPython for this to work.
     """
 
-    def __init__(self, parent, serial):
+    def __init__(self, parent):
         super().__init__(parent)
-        self.serial = serial
+        self.board = None
         self.setAcceptRichText(False)
         self.setReadOnly(False)
         self.setUndoRedoEnabled(False)
@@ -74,7 +75,8 @@ class REPLPane(QTextEdit):
         """
         clipboard = QApplication.clipboard()
         if clipboard and clipboard.text():
-            self.serial.write(bytes(clipboard.text(), 'utf8'))
+            if self.board:
+                self.board.send(bytes(clipboard.text(), 'utf8'))
 
     def context_menu(self):
         """"
@@ -99,13 +101,7 @@ class REPLPane(QTextEdit):
         tc = self.textCursor()
         tc.movePosition(QTextCursor.End)
         self.setTextCursor(tc)
-
-    def on_serial_read(self):
-        """
-        Called when the application gets data from the connected device.
-        """
-        self.process_bytes(bytes(self.serial.readAll()))
-
+        
     def keyPressEvent(self, data):
         """
         Called when the user types something in the REPL.
@@ -148,7 +144,8 @@ class REPLPane(QTextEdit):
             elif key == Qt.Key_V:
                 self.paste()
                 msg = b''
-        self.serial.write(msg)
+        if self.board:
+            self.board.send(msg)
 
     def process_bytes(self, data):
         """
@@ -218,8 +215,9 @@ class REPLPane(QTextEdit):
 
 class BlocklyPane(QWidget):
     """Creates a pane with Blockly opened in QWebEngineView Widget"""
-    def __init__(self, parent):
+    def __init__(self, parent, logic):
         super().__init__(parent)
+        self.logic = logic
         # Create Grid Layout for BlocklyPane Widget
         self.blockly_layout = QGridLayout(self)
         self.setLayout(self.blockly_layout)
@@ -228,7 +226,7 @@ class BlocklyPane(QWidget):
         self.blockly_browser = QWebEngineView(self)
 
         # BlocklyWebPage overwrites JavaScript Alert handling (generated code)
-        self.page = BlocklyWebPage()
+        self.page = BlocklyWebPage(self.logic)
         self.blockly_browser.setPage(self.page)
 
         # url = 'file://' + os.path.abspath(os.path.join('blockly','index.htm'))
@@ -286,6 +284,19 @@ class EditorPane(QTabWidget):
             tab.setModified(False)
 
         self.setCurrentIndex(tab.id)
+
+    def lock(self):
+        for id in range(self.count()-1):
+            self.setTabEnabled(id, False)
+        self.setTabsClosable(False)
+        self.widget(id+1).text_field.setReadOnly(True)
+
+    def unlock(self):
+        for id in range(self.count()):
+            self.setTabEnabled(id, True)
+        self.setTabsClosable(True)
+        self.widget(id).text_field.setReadOnly(False)
+
 
 
 class MainEditorWindow(QMainWindow):
@@ -420,7 +431,7 @@ class MainEditorWindow(QMainWindow):
 
         # Help
         self._toolbar_help = QAction(load_icon("help.png"), "Help", self)
-        # self._toolbar_help.triggered.connect(self.close)
+        self._toolbar_help.triggered.connect(self.update)
         self._toolbar.addAction(self._toolbar_help)
 
         # Exit
@@ -431,55 +442,41 @@ class MainEditorWindow(QMainWindow):
     def _init_central_widget(self):
     
         # Create a central widget with Grid layout
-        central_widget = QWidget(self)
+        self.central_widget = QWidget(self)
         self.central_grid = QGridLayout()
-        central_widget.setLayout(self.central_grid)
-        self.setCentralWidget(central_widget) # Place widget in QMainWindow
+        self.central_widget.setLayout(self.central_grid)
+        self.setCentralWidget(self.central_widget) # Place widget in QMainWindow
 
         # Create Horizontal and Vertical Splitter
         self.top_splitter = QSplitter(Qt.Horizontal)
         self.bottom_splitter = QSplitter(Qt.Vertical)
+        self.bottom_splitter2 = QSplitter(Qt.Vertical)
 
         # These are the widgets in the central widget
         # repl, blockly & storage are created when needed
-        self.repl_pane = None
         self.editor_pane = EditorPane(self.top_splitter)
-        self.blockly_pane = None
-        self.storage_pane = None
+        self.blockly_pane = BlocklyPane(self.top_splitter, self.logic)
+        self.blockly_pane.hide()
+        self.storage_pane = QTextEdit(self.bottom_splitter)
+        self.storage_pane.hide()
+        self.repl_pane = self.repl_pane = REPLPane(self.bottom_splitter)
+        self.repl_pane.hide()
 
         # Add Splitters to central grid
         self.central_grid.addWidget(self.top_splitter)
         self.central_grid.addWidget(self.bottom_splitter)
+        self.central_grid.addWidget(self.bottom_splitter2)
         
         # Place top_splitter as top widget of bottom_splitter
-        self.bottom_splitter.addWidget(self.top_splitter)
-
-    def add_repl_pane(self):
-        self.repl_pane = REPLPane(self.bottom_splitter, self.logic.serial)
-        self.bottom_splitter.addWidget(self.repl_pane)
-
-    def add_blockly_pane(self):
-        self.blockly_pane = BlocklyPane(self.top_splitter)
+        self.top_splitter.addWidget(self.editor_pane)
         self.top_splitter.addWidget(self.blockly_pane)
 
-    def add_storage_pane(self):
-        self.storage_pane = QTextEdit(self.bottom_splitter)
-        self.bottom_splitter.addWidget(self.storage_pane)
+        self.bottom_splitter.addWidget(self.top_splitter)
+        self.bottom_splitter.addWidget(self.repl_pane)
 
-    def rm_repl_pane(self):
-        self.repl_pane.setParent(None)
-        self.repl_pane.deleteLater()
-        self.repl_pane = None
+        self.bottom_splitter2.addWidget(self.bottom_splitter)
+        self.bottom_splitter2.addWidget(self.storage_pane)
 
-    def rm_blockly_pane(self):
-        self.blockly_pane.setParent(None)
-        self.blockly_pane.deleteLater()
-        self.blockly_pane = None
-
-    def rm_storage_pane(self):
-        self.storage_pane.setParent(None)
-        self.storage_pane.deleteLater()
-        self.storage_pane = None
 
     def closeEvent(self, event):
         """Called when user wants to close the App
