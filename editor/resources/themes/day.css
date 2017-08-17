@@ -67,3 +67,11 @@ QTabBar::tab:!selected {
 QsciScintilla {
 	border:0px;
 }
+
+QLabel {
+    color: #ddd;
+}
+
+ConnectWindow {
+    background-color: #006468;
+}

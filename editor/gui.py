@@ -1,9 +1,10 @@
 from PyQt5.QtWidgets import (QMainWindow, QDesktopWidget, QTabWidget,
     QMessageBox, QSplitter, QTextEdit, QAction, qApp, QWidget,
-    QGridLayout, QPushButton, QFileDialog, QMenu, QApplication)
+    QGridLayout, QPushButton, QFileDialog, QMenu, QApplication,
+    QComboBox, QLabel)
 from PyQt5.QtGui import (QCloseEvent, QFont, QIcon, QColor, QTextCursor, QKeySequence,
     QCursor, QFontDatabase)
-from PyQt5.QtCore import QSize, Qt, QUrl
+from PyQt5.QtCore import QSize, Qt, QUrl, QTimer
 from PyQt5.Qsci import QsciScintilla
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
 from editor.resources import load_icon, list_themes, load_theme
@@ -229,9 +230,9 @@ class BlocklyPane(QWidget):
         self.page = BlocklyWebPage(self.logic)
         self.blockly_browser.setPage(self.page)
 
-        # url = 'file://' + os.path.abspath(os.path.join('blockly','index.htm'))
-        url = QUrl('http://marekmansell.sk/test/blockly/')
-        self.blockly_browser.load(url) # Load Website
+        url = 'file://' + os.path.abspath(os.path.join('blockly','index.html'))
+        # url = 'http://marekmansell.sk/test/blockly/'
+        self.blockly_browser.load(QUrl(url)) # Load Website
         self.blockly_layout.addWidget(self.blockly_browser) # Display Browser
 
 
@@ -319,6 +320,7 @@ class MainEditorWindow(QMainWindow):
         self.show()
 
     def set_theme(self, theme_id=0):
+        self.theme_id = theme_id
         self.setStyleSheet(load_theme(theme_id))
 
     def _init_menubar(self):
@@ -395,7 +397,7 @@ class MainEditorWindow(QMainWindow):
 
         # Flash
         self._toolbar_flash = QAction(load_icon("flash.png"), "Flash", self)
-        # self._toolbar_flash.triggered.connect(self.close)
+        self._toolbar_flash.triggered.connect(self.logic.flash)
         self._toolbar.addAction(self._toolbar_flash)
 
         # Vertical Separator
@@ -417,8 +419,8 @@ class MainEditorWindow(QMainWindow):
         self._toolbar.addAction(self._toolbar_blockly)
 
         # Connect
-        self._toolbar_connect = QAction(load_icon("device.png"), "Connect", self)
-        self._toolbar_connect.triggered.connect(self.logic.connect)
+        self._toolbar_connect = QAction(load_icon("device_manual_alert.png"), "Connect", self)
+        self._toolbar_connect.triggered.connect(self.connect)
         self._toolbar.addAction(self._toolbar_connect)
 
         # Vertical Separator
@@ -482,7 +484,8 @@ class MainEditorWindow(QMainWindow):
         """Called when user wants to close the App
         and chceck whether any files nees saving
         """
-        pass
+        if self.repl_pane.board:
+            self.repl_pane.board.close()
         # reply = QMessageBox.question(
         #             self, 'Quit Program?', 'Do you really want to quit?',
         #             QMessageBox.Yes | QMessageBox.No)
@@ -505,3 +508,79 @@ class MainEditorWindow(QMainWindow):
     def get_save_path(self, path):
         path, _ = QFileDialog.getSaveFileName(self, 'Save file', path)
         return path
+
+    def connect(self):
+        connect_window = ConnectWindow(parent=self, logic=self.logic, theme_id=self.theme_id)
+
+    def update_device_icon(self, auto=False, connected=False):
+        if connected and (not auto):
+            self._toolbar_connect.setIcon(load_icon("device_manual_ok.png"))
+        if connected and auto:
+            self._toolbar_connect.setIcon(load_icon("device_auto_ok.png"))
+        if (not connected) and (not auto):
+            self._toolbar_connect.setIcon(load_icon("device_manual_alert.png"))
+        if (not connected) and auto:
+            self._toolbar_connect.setIcon(load_icon("device_auto_alert.png"))
+
+
+
+class ConnectWindow(QMainWindow):
+    def __init__(self, parent, logic, theme_id=0):
+        super().__init__(parent)
+        self.logic = logic
+        self.theme_id = theme_id
+        self.setStyleSheet(load_theme(theme_id))
+        self.resize(400,150)
+        _center_window(self)
+        self.setWindowTitle("Connect to device")
+        self._init_central_widget()
+        self.parent = parent
+        self.setWindowFlag(Qt.WindowStaysOnTopHint)
+        self.show()
+
+    def update_devices(self):
+        self.device_select.clear()
+        self.device_select.addItems(self.logic.get_comports())
+
+    def _init_central_widget(self):
+
+        # Create a central widget with Grid layout
+        self.central_widget = QWidget(self)
+        self.central_grid = QGridLayout()
+        self.central_widget.setLayout(self.central_grid)
+        self.setCentralWidget(self.central_widget) # Place widget in QMainWindow
+        self.central_grid.setAlignment(Qt.AlignTop)
+        self.central_grid.setColumnMinimumWidth(0, 55)
+        self.central_grid.setColumnStretch(0, 0)
+        self.central_grid.setColumnStretch(1, 1)
+
+
+        device_label = QLabel("Select COM port:")
+        self.central_grid.addWidget(device_label, 0, 0, alignment=Qt.AlignLeft)
+
+        self.device_select = QComboBox(self)
+        self.central_grid.addWidget(self.device_select, 0, 1, alignment=Qt.AlignLeft)
+
+        board_label = QLabel("Select BOARD type:")
+        self.central_grid.addWidget(board_label, 1, 0, alignment=Qt.AlignLeft)
+
+        self.board_select = QComboBox(self)
+        self.central_grid.addWidget(self.board_select, 1, 1, alignment=Qt.AlignLeft)
+        self.board_select.addItems(self.logic.get_board_types())
+
+        self.button = QPushButton("Connect", self)
+        self.central_grid.addWidget(self.button, 2, 1, alignment=Qt.AlignLeft)
+        self.button.clicked.connect(self.connect)
+
+        self.update_devices()
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_devices)
+        self.timer.start(250)
+
+    def connect(self):
+        com = self.device_select.currentText()
+        board = self.board_select.currentText()
+        if com and board:
+            self.logic.connect(com, board)
+            self.timer.stop()
+            self.destroy()
